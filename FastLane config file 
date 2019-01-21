@@ -1,0 +1,200 @@
+min_fastlane_version("2.71.0")
+
+default_platform(:ios)
+
+app_name = "Application name"
+date = Time.now.strftime('%F')
+time = Time.now.strftime('%R')
+
+platform :ios do
+  before_all do
+      ENV["SLACK_URL"] = "Setup slack url with webhook"
+      ENV["FL_HOCKEY_API_TOKEN"] = "Setup hocky app token"
+      ensure_git_status_clean
+      clear_derived_data
+      cocoapods
+  end
+
+  desc "Runs all the tests"
+  lane :test do
+    run_tests
+  end
+
+  desc "Submit a new Dev Build to HockeyApp"
+  lane :dev do
+#      ensure_git_branch(
+#          branch: 'develop',
+#      )
+      current_branch = git_branch
+      app_environment = "Dev"
+      build_number = increment_build_number
+      version = get_version_number(xcodeproj: " -> yourProject.xcodeproj", target: " -> Name of project")
+      release_notes = File.read("../releaseNotes.md")
+      add_badge(
+         # badge --shield "1.2-2031-orange" --no_badge
+          shield: "#{version}-#{build_number}-orange",
+          no_badge: true
+      )
+      build_app(
+          workspace: "-> yourProject.xcworkspace",
+          configuration: "#{app_environment}",
+          scheme: "-> Project scheme#{app_environment}",
+          silent: true,
+          clean: true,
+          export_method: "ad-hoc",
+          output_directory: "./builds/#{date}/#{time}",
+          output_name: "#{app_name}-#{app_environment}.ipa",
+      )
+      sh("git", "checkout", "--", "..-> url path to project assets")
+      commit_version_bump(
+          message: "Deploying #{app_environment} version: #{version}(#{build_number})",
+      )
+      push_to_git_remote(
+          remote: "origin",
+          local_branch: "#{current_branch}",  # optional, aliased by "branch", default: "master"
+          remote_branch: "#{current_branch}", # optional, default is set to local_branch
+          force: true,    # optional, default: false
+          tags: false     # optional, default: true
+      )
+      hockey(
+          ipa: "builds/#{date}/#{time}/#{app_name}-#{app_environment}.ipa",
+          dsym: "builds/#{date}/#{time}/#{app_name}-#{app_environment}.app.dSYM.zip",
+          notes: release_notes,
+          notify: "1", #"1" is for notifying
+          tags: "#{app_environment}".downcase,
+      )
+      slack(
+          message: ":rocket: -> yourProject Name(#{app_environment}) App is successfully uploaded to HockeyApp :beers:",
+          channel: "#ios_channel",
+          success: true,
+          payload: {
+            "Version" => "*#{version}(#{build_number})*",
+            "Build Date" => Time.new.to_s,
+            "Built by" => "your Company iOS CI Server",
+          },
+          default_payloads: [:git_branch, :git_author, :last_git_commit_hash],
+      )
+  end
+
+  desc "Submit a new Staging Build to HockeyApp"
+  lane :staging do
+#      ensure_git_branch(
+#          branch: '^[release]+\/[release-]+\d{1}(\.\d{1,2})+$'
+#      )
+      current_branch = git_branch
+      app_environment = "Staging"
+      build_number = increment_build_number
+      version = get_version_number(xcodeproj: "-> your Project Name.xcodeproj")
+      release_notes = File.read("../releaseNotes.md")
+      add_badge(
+         # badge --shield "1.2-2031-orange" --no_badge
+          shield: "#{version}-#{build_number}-orange",
+          no_badge: true
+      )
+      build_app(
+          workspace: " -> Your project Name.xcworkspace",
+          configuration: "#{app_environment}",
+          scheme: "-> yourProject Name#{app_environment}",
+          silent: true,
+          clean: true,
+          export_method: "ad-hoc",
+          output_directory: "./builds/#{date}/#{time}",
+          output_name: "#{app_name}-#{app_environment}.ipa",
+      )
+      sh("git", "checkout", "--", " -> ..url project path to assets.xcassets/")
+      commit_version_bump(
+          message: "Deploying #{app_environment} version: #{version}(#{build_number})",
+      )
+      push_to_git_remote(
+          remote: "origin",
+          local_branch: "#{current_branch}",  # optional, aliased by "branch", default: "master"
+          remote_branch: "#{current_branch}", # optional, default is set to local_branch
+          force: true,    # optional, default: false
+          tags: false     # optional, default: true
+      )
+      hockey(
+          ipa: "builds/#{date}/#{time}/#{app_name}-#{app_environment}.ipa",
+          dsym: "builds/#{date}/#{time}/#{app_name}-#{app_environment}.app.dSYM.zip",
+          notes: release_notes,
+          notify: "0", #"1" is for notifying
+          tags: "#{app_environment}".downcase,
+      )
+
+      slack(
+          message: ":rocket: -> yourProject(#{app_environment}) App is successfully uploaded to HockeyApp :beers:",
+          channel: "#ios_channel",
+          success: true,
+          payload: {
+            "Version" => "*#{version}(#{build_number})*",
+            "Build Date" => Time.new.to_s,
+            "Built by" => "Company name iOS CI Server",
+          },
+          default_payloads: [:git_branch, :git_author, :last_git_commit_hash],
+      )
+  end
+
+  desc "Submit a new Beta Build to Apple TestFlight"
+  desc "This will also make sure the profile is up to date"
+  lane :beta do
+    # sync_code_signing(type: "appstore") # more information: https://codesigning.guide
+    build_app(scheme: "-> yourProject Name") # more options available
+    upload_to_testflight
+
+    # sh "your_script.sh"
+    # You can also use other beta testing services here (run `fastlane actions`)
+  end
+
+  desc "Deploy a new version to the App Store"
+  lane :release do
+    ensure_git_branch(
+        branch: 'master',
+    )
+    app_environment = "Release"
+    #capture_screenshots
+    build_app(
+        workspace: "-> yourProject name.xcworkspace",
+        configuration: "#{app_environment}",
+        scheme: "-> yourProject name",
+        silent: true,
+        clean: true,
+        export_method: "app-store",
+        output_directory: "./builds/release/#{date}/#{time}",
+        output_name: "#{app_name}-#{app_environment}.ipa",
+    )
+    upload_to_app_store(
+        force: true,
+        ipa: "./builds/release/#{date}/#{time}/#{app_name}-#{app_environment}.ipa",
+        skip_screenshots: true,
+    )
+    slack(
+        message: ":rocket: -> Your project name(#{app_environment}) App is successfully uploaded to App Store :beers:",
+        channel: "#ios_channel",
+        success: true,
+        payload: {
+          "Version" => "*#{version}(#{build_number})*",
+          "Build Date" => Time.new.to_s,
+          "Built by" => "-> your Company iOS CI Server",
+          "Admin reminder" => "*Update app metadata and submit the app for review* https://itunesconnect.apple.com"
+        },
+        default_payloads: [:git_branch, :git_author, :last_git_commit_hash],
+    )
+    # frame_screenshots
+  end
+
+  # You can define as many lanes as you want
+
+  after_all do |lane|
+    # This block is called, only if the executed lane was successful
+
+    # slack(
+    #   message: "Successfully deployed new App Update."
+    # )
+  end
+
+  error do |lane, exception|
+     slack(
+       message: exception.message,
+       success: false
+     )
+  end
+end
